@@ -10,12 +10,11 @@ module Test.Hspec.Discover.Run (
 -- exported for testing
 , Spec(..)
 , importList
-, fileToSpec
-, findSpecs
-, getFilesRecursive
 , driverWithFormatter
 , moduleNameFromId
 , pathToModule
+, Tree(..)
+, discover
 ) where
 import           Control.Monad
 import           Control.Applicative
@@ -120,20 +119,15 @@ formatSpec :: Spec -> ShowS
 formatSpec (Spec name) = "describe " . shows name . " " . showString name . "Spec.spec"
 
 findSpecs :: FilePath -> IO [Spec]
-findSpecs src = do
-  let (dir, file) = splitFileName src
-  mapMaybe fileToSpec . filter (/= file) <$> getFilesRecursive dir
+findSpecs = fmap toSpecs . discover
 
-fileToSpec :: FilePath -> Maybe Spec
-fileToSpec file = case reverse $ splitDirectories file of
-  x:xs -> case stripSuffix "Spec.hs" x <|> stripSuffix "Spec.lhs" x of
-    Just name | isValidModuleName name && all isValidModuleName xs ->
-      Just . Spec $ (intercalate "." . reverse) (name : xs)
-    _ -> Nothing
-  _ -> Nothing
+toSpecs :: [Tree] -> [Spec]
+toSpecs = concatMap (go [])
   where
-    stripSuffix :: Eq a => [a] -> [a] -> Maybe [a]
-    stripSuffix suffix str = reverse <$> stripPrefix (reverse suffix) (reverse str)
+    go :: [String] -> Tree -> [Spec]
+    go xs spec = case spec of
+      Leaf name -> [Spec . intercalate "." $ reverse (name : xs )]
+      Node name ys -> concatMap (go $ name : xs) ys
 
 -- See `Cabal.Distribution.ModuleName` (http://git.io/bj34)
 isValidModuleName :: String -> Bool
@@ -143,13 +137,36 @@ isValidModuleName (c:cs) = isUpper c && all isValidModuleChar cs
 isValidModuleChar :: Char -> Bool
 isValidModuleChar c = isAlphaNum c || c == '_' || c == '\''
 
-getFilesRecursive :: FilePath -> IO [FilePath]
-getFilesRecursive baseDir = sortNaturally <$> go []
+data Tree = Leaf String | Node String [Tree]
+  deriving (Eq, Show)
 
+discover :: FilePath -> IO [Tree]
+discover src = maybe id (filter . (/=)) (toSpec file) <$> specForest dir
   where
-    go :: FilePath -> IO [FilePath]
-    go dir = do
-      c <- map (dir </>) . filter (`notElem` [".", ".."]) <$> getDirectoryContents (baseDir </> dir)
-      dirs <- filterM (doesDirectoryExist . (baseDir </>)) c >>= mapM go
-      files <- filterM (doesFileExist . (baseDir </>)) c
-      return (files ++ concat dirs)
+    (dir, file) = splitFileName src
+
+specForest :: FilePath -> IO [Tree]
+specForest dir = (filterModules <$> listDirectory dir) >>= fmap catMaybes . mapM toSpecTree
+  where
+    filterModules :: [FilePath] -> [FilePath]
+    filterModules = sortNaturallyBy takeBaseName . filter (isValidModuleName . takeBaseName)
+
+    toSpecTree :: FilePath -> IO (Maybe Tree)
+    toSpecTree name = do
+      isDirectory <- doesDirectoryExist (dir </> name)
+      if isDirectory then do
+        xs <- specForest (dir </> name)
+        return $ guard (not . null $ xs) >> Just (Node name xs)
+      else do
+        isFile <- doesFileExist (dir </> name)
+        return $ guard isFile >> toSpec name
+
+toSpec :: FilePath -> Maybe Tree
+toSpec file = Leaf <$> (stripSuffix "Spec.hs" file <|> stripSuffix "Spec.lhs" file)
+  where
+    stripSuffix :: Eq a => [a] -> [a] -> Maybe [a]
+    stripSuffix suffix str = reverse <$> stripPrefix (reverse suffix) (reverse str)
+
+listDirectory :: FilePath -> IO [FilePath]
+listDirectory path = filter f <$> getDirectoryContents path
+  where f filename = filename /= "." && filename /= ".."
