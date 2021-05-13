@@ -56,7 +56,7 @@ run args_ = do
       hPutStrLn stderr (usage name)
       exitFailure
 
-mkSpecModule :: FilePath -> Config -> [Spec] -> String
+mkSpecModule :: FilePath -> Config -> Maybe [Spec] -> String
 mkSpecModule src conf nodes =
   ( "{-# LINE 1 " . shows src . " #-}\n"
   . showString "{-# LANGUAGE NoImplicitPrelude #-}\n"
@@ -98,8 +98,8 @@ moduleNameFromId :: String -> String
 moduleNameFromId = reverse . dropWhile (== '.') . dropWhile (/= '.') . reverse
 
 -- | Generate imports for a list of specs.
-importList :: [Spec] -> ShowS
-importList = foldr (.) "" . map f
+importList :: Maybe [Spec] -> ShowS
+importList = foldr (.) "" . map f . fromMaybe []
   where
     f :: Spec -> ShowS
     f spec = "import qualified " . showString (specModule spec) . "Spec\n"
@@ -109,17 +109,17 @@ sequenceS :: [ShowS] -> ShowS
 sequenceS = foldr (.) "" . intersperse " >> "
 
 -- | Convert a list of specs to code.
-formatSpecs :: [Spec] -> ShowS
-formatSpecs xs
-  | null xs   = "return ()"
-  | otherwise = sequenceS (map formatSpec xs)
+formatSpecs :: Maybe [Spec] -> ShowS
+formatSpecs specs = case specs of
+  Nothing -> "return ()"
+  Just xs -> sequenceS (map formatSpec xs)
 
 -- | Convert a spec to code.
 formatSpec :: Spec -> ShowS
 formatSpec (Spec name) = "describe " . shows name . " " . showString name . "Spec.spec"
 
-findSpecs :: FilePath -> IO [Spec]
-findSpecs = fmap toSpecs . discover
+findSpecs :: FilePath -> IO (Maybe [Spec])
+findSpecs = fmap (fmap toSpecs) . discover
 
 toSpecs :: [Tree] -> [Spec]
 toSpecs = concatMap (go [])
@@ -140,13 +140,16 @@ isValidModuleChar c = isAlphaNum c || c == '_' || c == '\''
 data Tree = Leaf String | Node String [Tree]
   deriving (Eq, Show)
 
-discover :: FilePath -> IO [Tree]
-discover src = maybe id (filter . (/=)) (toSpec file) <$> specForest dir
+discover :: FilePath -> IO (Maybe [Tree])
+discover src = (>>= filterSrc) <$> specForest dir
   where
+    filterSrc :: [Tree] -> Maybe [Tree]
+    filterSrc = ensureNotNull . maybe id (filter . (/=)) (toSpec file)
+
     (dir, file) = splitFileName src
 
-specForest :: FilePath -> IO [Tree]
-specForest dir = (filterModules <$> listDirectory dir) >>= fmap catMaybes . mapM toSpecTree
+specForest :: FilePath -> IO (Maybe [Tree])
+specForest dir = (filterModules <$> listDirectory dir) >>= fmap (ensureNotNull . catMaybes) . mapM toSpecTree
   where
     filterModules :: [FilePath] -> [FilePath]
     filterModules = sortNaturallyBy takeBaseName . filter (isValidModuleName . takeBaseName)
@@ -156,7 +159,7 @@ specForest dir = (filterModules <$> listDirectory dir) >>= fmap catMaybes . mapM
       isDirectory <- doesDirectoryExist (dir </> name)
       if isDirectory then do
         xs <- specForest (dir </> name)
-        return $ guard (not . null $ xs) >> Just (Node name xs)
+        return $ Node name <$> xs
       else do
         isFile <- doesFileExist (dir </> name)
         return $ guard isFile >> toSpec name
@@ -166,6 +169,9 @@ toSpec file = Leaf <$> (stripSuffix "Spec.hs" file <|> stripSuffix "Spec.lhs" fi
   where
     stripSuffix :: Eq a => [a] -> [a] -> Maybe [a]
     stripSuffix suffix str = reverse <$> stripPrefix (reverse suffix) (reverse str)
+
+ensureNotNull :: [a] -> Maybe [a]
+ensureNotNull xs = guard (not . null $ xs) >> Just xs
 
 listDirectory :: FilePath -> IO [FilePath]
 listDirectory path = filter f <$> getDirectoryContents path

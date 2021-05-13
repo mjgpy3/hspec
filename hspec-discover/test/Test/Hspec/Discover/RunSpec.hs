@@ -66,7 +66,7 @@ spec = do
 
   describe "importList" $ do
     it "generates imports for a list of specs" $ do
-      importList [Run.Spec "Foo", Run.Spec "Bar"] "" `shouldBe` unlines [
+      importList (Just [Run.Spec "Foo", Run.Spec "Bar"]) "" `shouldBe` unlines [
           "import qualified FooSpec"
         , "import qualified BarSpec"
         ]
@@ -77,23 +77,23 @@ spec = do
         touch "test/Spec.hs"
         touch "test/FooSpec.hs"
         touch "test/BarSpec.hs"
-        discover "test/Spec.hs" `shouldReturn` [Leaf "Bar", Leaf "Foo"]
+        discover "test/Spec.hs" `shouldReturn` Just [Leaf "Bar", Leaf "Foo"]
 
     it "discovers nested spec files" $ do
       inTempDirectory $ do
         touch "test/Spec.hs"
         touch "test/Foo/BarSpec.hs"
         touch "test/Foo/BazSpec.hs"
-        discover "test/Spec.hs" `shouldReturn` [Node "Foo" [Leaf "Bar", Leaf "Baz"]]
+        discover "test/Spec.hs" `shouldReturn` Just [Node "Foo" [Leaf "Bar", Leaf "Baz"]]
 
     it "ignores invalid module names" $ do
       inTempDirectory $ do
         touch "test/Spec.hs"
         touch "test/barSpec.hs"
-        discover "test/Spec.hs" `shouldReturn` []
+        discover "test/Spec.hs" `shouldReturn` Nothing
 
     it "ignores empty directories" $ do
       inTempDirectory $ do
         touch "test/Spec.hs"
         touch "test/Foo/.keep"
-        discover "test/Spec.hs" `shouldReturn` []
+        discover "test/Spec.hs" `shouldReturn` Nothing
