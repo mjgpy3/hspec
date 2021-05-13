@@ -36,7 +36,7 @@ import           Test.Hspec.Discover.Sort
 instance IsString ShowS where
   fromString = showString
 
-data Spec = Spec {
+newtype Spec = Spec {
   specModule :: String
 } deriving (Eq, Show)
 
@@ -151,6 +151,11 @@ data Forest = Forest Hook [Tree]
 data Hook = WithHook | WithoutHook
   deriving (Eq, Show)
 
+sortKey :: Tree -> (String, Int)
+sortKey tree = case tree of
+  Leaf name -> (name, 0)
+  Node name _ -> (name, 1)
+
 discover :: FilePath -> IO (Maybe Forest)
 discover src = (>>= filterSrc) <$> specForest dir
   where
@@ -161,41 +166,46 @@ discover src = (>>= filterSrc) <$> specForest dir
 
 specForest :: FilePath -> IO (Maybe Forest)
 specForest dir = do
-  files <- filterModules <$> listDirectory dir
+  files <- listDirectory dir
   hook <- mkHook dir files
-  ensureForest hook . catMaybes <$> mapM toSpecTree files
+  ensureForest hook . sortNaturallyBy sortKey . catMaybes <$> mapM toSpecTree files
   where
-    filterModules :: [FilePath] -> [FilePath]
-    filterModules = sortNaturallyBy takeBaseName . filter (isValidModuleName . takeBaseName)
-
     toSpecTree :: FilePath -> IO (Maybe Tree)
-    toSpecTree name = do
-      isDirectory <- doesDirectoryExist (dir </> name)
-      if isDirectory then do
-        xs <- specForest (dir </> name)
-        return $ Node name <$> xs
-      else do
-        isFile <- doesFileExist (dir </> name)
-        return $ guard isFile >> toSpec name
+    toSpecTree name
+      | isValidModuleName name = do
+          doesDirectoryExist (dir </> name) `fallback` Nothing $ do
+            xs <- specForest (dir </> name)
+            return $ Node name <$> xs
+      | otherwise = do
+          doesFileExist (dir </> name) `fallback` Nothing $ do
+            return $ toSpec name
 
 mkHook :: FilePath -> [FilePath] -> IO Hook
 mkHook dir files
   | "SpecHook.hs" `elem` files = do
-    isFile <- doesFileExist (dir </> "SpecHook.hs")
-    return $ if isFile then WithHook else WithoutHook
+    doesFileExist (dir </> "SpecHook.hs") `fallback` WithoutHook $ do
+      return WithHook
   | otherwise = return WithoutHook
 
+fallback :: IO Bool -> a -> IO a -> IO a
+fallback p def action = do
+  bool <- p
+  if bool then action else return def
+
 toSpec :: FilePath -> Maybe Tree
-toSpec file = Leaf <$> (stripSuffix "Spec.hs" file <|> stripSuffix "Spec.lhs" file)
+toSpec file = Leaf <$> (spec >>= ensure isValidModuleName)
   where
+    spec :: Maybe String
+    spec = stripSuffix "Spec.hs" file <|> stripSuffix "Spec.lhs" file
+
     stripSuffix :: Eq a => [a] -> [a] -> Maybe [a]
     stripSuffix suffix str = reverse <$> stripPrefix (reverse suffix) (reverse str)
 
-ensureForest :: Hook -> [Tree] -> Maybe Forest
-ensureForest hook = fmap (Forest hook) . ensureNotNull
+ensure :: (a -> Bool) -> a -> Maybe a
+ensure p a = guard (p a) >> Just a
 
-ensureNotNull :: [a] -> Maybe [a]
-ensureNotNull xs = guard (not . null $ xs) >> Just xs
+ensureForest :: Hook -> [Tree] -> Maybe Forest
+ensureForest hook = fmap (Forest hook) . ensure (not . null)
 
 listDirectory :: FilePath -> IO [FilePath]
 listDirectory path = filter f <$> getDirectoryContents path

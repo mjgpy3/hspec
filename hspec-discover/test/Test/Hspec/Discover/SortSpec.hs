@@ -9,7 +9,7 @@ shuffleAndSort :: [String] -> IO [String]
 shuffleAndSort xs = sortNaturally <$> generate (shuffle xs)
 
 sortNaturally :: [String] -> [String]
-sortNaturally = sortNaturallyBy id
+sortNaturally = sortNaturallyBy $ \ name -> (name, 0)
 
 spec :: Spec
 spec = do

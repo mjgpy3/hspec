@@ -12,8 +12,8 @@ import           Data.Char
 import           Data.List
 import           Data.Ord
 
-sortNaturallyBy :: (a -> String) -> [a] -> [a]
-sortNaturallyBy f = sortBy (comparing (naturalSortKey . f))
+sortNaturallyBy :: (a -> (String, Int)) -> [a] -> [a]
+sortNaturallyBy f = sortBy (comparing ((\ (k, t) -> (naturalSortKey k, t)) . f))
 
 data NaturalSortKey = NaturalSortKey [Chunk]
   deriving (Eq, Ord)

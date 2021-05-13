@@ -19,17 +19,17 @@ spec = do
         , "{-# LANGUAGE NoImplicitPrelude #-}"
         , "{-# OPTIONS_GHC -fno-warn-warnings-deprecations #-}"
         , "module Main where"
-        , "import qualified Foo.Bar.BazSpec"
-        , "import qualified Foo.BarSpec"
         , "import qualified FooSpec"
+        , "import qualified Foo.BarSpec"
+        , "import qualified Foo.Bar.BazSpec"
         , "import Test.Hspec.Discover"
         , "main :: IO ()"
         , "main = hspec spec"
         , "spec :: Spec"
         , "spec = " ++ unwords [
-               "describe \"Foo.Bar.Baz\" Foo.Bar.BazSpec.spec"
+               "describe \"Foo\" FooSpec.spec"
           , ">> describe \"Foo.Bar\" Foo.BarSpec.spec"
-          , ">> describe \"Foo\" FooSpec.spec"
+          , ">> describe \"Foo.Bar.Baz\" Foo.Bar.BazSpec.spec"
           ]
         ]
 
@@ -112,4 +112,10 @@ spec = do
       inTempDirectory $ do
         touch "test/Spec.hs"
         touch "test/Foo/.keep"
+        discover "test/Spec.hs" `shouldReturn` Nothing
+
+    it "ignores directories with extension" $ do
+      inTempDirectory $ do
+        touch "test/Spec.hs"
+        touch "test/Foo.hs/BarSpec.hs"
         discover "test/Spec.hs" `shouldReturn` Nothing
