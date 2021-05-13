@@ -36,9 +36,8 @@ import           Test.Hspec.Discover.Sort
 instance IsString ShowS where
   fromString = showString
 
-newtype Spec = Spec {
-  specModule :: String
-} deriving (Eq, Show)
+data Spec = Spec String | Hook String [Spec]
+  deriving (Eq, Show)
 
 run :: [String] -> IO ()
 run args_ = do
@@ -101,24 +100,38 @@ moduleNameFromId = reverse . dropWhile (== '.') . dropWhile (/= '.') . reverse
 
 -- | Generate imports for a list of specs.
 importList :: Maybe [Spec] -> ShowS
-importList = foldr (.) "" . map f . fromMaybe []
+importList = foldr (.) "" . map f . maybe [] moduleNames
   where
-    f :: Spec -> ShowS
-    f spec = "import qualified " . showString (specModule spec) . "Spec\n"
+    f :: String -> ShowS
+    f spec = "import qualified " . showString spec . "\n"
+
+moduleNames :: [Spec] -> [String]
+moduleNames = fromForest
+  where
+    fromForest :: [Spec] -> [String]
+    fromForest = concatMap fromTree
+
+    fromTree :: Spec -> [String]
+    fromTree tree = case tree of
+      Spec name -> [name ++ "Spec"]
+      Hook name forest -> name : fromForest forest
 
 -- | Combine a list of strings with (>>).
 sequenceS :: [ShowS] -> ShowS
 sequenceS = foldr (.) "" . intersperse " >> "
 
--- | Convert a list of specs to code.
 formatSpecs :: Maybe [Spec] -> ShowS
 formatSpecs specs = case specs of
   Nothing -> "return ()"
-  Just xs -> sequenceS (map formatSpec xs)
+  Just xs -> fromForest xs
+  where
+    fromForest :: [Spec] -> ShowS
+    fromForest = sequenceS . map fromTree
 
--- | Convert a spec to code.
-formatSpec :: Spec -> ShowS
-formatSpec (Spec name) = "describe " . shows name . " " . showString name . "Spec.spec"
+    fromTree :: Spec -> ShowS
+    fromTree tree = case tree of
+      Spec name -> "describe " . shows name . " " . showString name . "Spec.spec"
+      Hook name forest -> "(" . showString name . ".hook $ " . fromForest forest . ")"
 
 findSpecs :: FilePath -> IO (Maybe [Spec])
 findSpecs = fmap (fmap toSpecs) . discover
@@ -127,12 +140,16 @@ toSpecs :: Forest -> [Spec]
 toSpecs = fromForest []
   where
     fromForest :: [String] -> Forest -> [Spec]
-    fromForest names (Forest hook xs) = concatMap (fromTree names) xs
+    fromForest names (Forest WithHook xs) = [Hook (mkModule ("SpecHook" : names)) $ concatMap (fromTree names) xs]
+    fromForest names (Forest WithoutHook xs) = concatMap (fromTree names) xs
 
     fromTree :: [String] -> Tree -> [Spec]
     fromTree names spec = case spec of
-      Leaf name -> [Spec . intercalate "." $ reverse (name : names )]
+      Leaf name -> [Spec $ mkModule (name : names )]
       Node name forest -> fromForest (name : names) forest
+
+    mkModule :: [String] -> String
+    mkModule = intercalate "." . reverse
 
 -- See `Cabal.Distribution.ModuleName` (http://git.io/bj34)
 isValidModuleName :: String -> Bool

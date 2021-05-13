@@ -9,7 +9,7 @@ import qualified Test.Hspec.Discover.Run as Run
 spec :: Spec
 spec = do
   describe "run" $ around_ inTempDirectory $ do
-    it "generates test driver" $ do
+    it "generates a test driver" $ do
       touch "test/FooSpec.hs"
       touch "test/Foo/Bar/BazSpec.hs"
       touch "test/Foo/BarSpec.hs"
@@ -33,7 +33,35 @@ spec = do
           ]
         ]
 
-    it "generates test driver for an empty directory" $ do
+    it "generates a test driver with hooks" $ do
+      touch "test/FooSpec.hs"
+      touch "test/Foo/Bar/BazSpec.hs"
+      touch "test/Foo/BarSpec.hs"
+      touch "test/Foo/SpecHook.hs"
+      touch "test/SpecHook.hs"
+      run ["test/Spec.hs", "", "out"]
+      readFile "out" `shouldReturn` unlines [
+          "{-# LINE 1 \"test/Spec.hs\" #-}"
+        , "{-# LANGUAGE NoImplicitPrelude #-}"
+        , "{-# OPTIONS_GHC -fno-warn-warnings-deprecations #-}"
+        , "module Main where"
+        , "import qualified SpecHook"
+        , "import qualified FooSpec"
+        , "import qualified Foo.SpecHook"
+        , "import qualified Foo.BarSpec"
+        , "import qualified Foo.Bar.BazSpec"
+        , "import Test.Hspec.Discover"
+        , "main :: IO ()"
+        , "main = hspec spec"
+        , "spec :: Spec"
+        , "spec = " ++ unwords [
+               "(SpecHook.hook $ describe \"Foo\" FooSpec.spec"
+          , ">> (Foo.SpecHook.hook $ describe \"Foo.Bar\" Foo.BarSpec.spec"
+          , ">> describe \"Foo.Bar.Baz\" Foo.Bar.BazSpec.spec))"
+          ]
+        ]
+
+    it "generates a test driver for an empty directory" $ do
       touch "test/Foo/Bar/Baz/.placeholder"
       run ["test/Spec.hs", "", "out"]
       readFile "out" `shouldReturn` unlines [
