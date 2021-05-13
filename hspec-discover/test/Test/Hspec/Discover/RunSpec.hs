@@ -77,14 +77,30 @@ spec = do
         touch "test/Spec.hs"
         touch "test/FooSpec.hs"
         touch "test/BarSpec.hs"
-        discover "test/Spec.hs" `shouldReturn` Just [Leaf "Bar", Leaf "Foo"]
+        discover "test/Spec.hs" `shouldReturn` Just (Forest WithoutHook [Leaf "Bar", Leaf "Foo"])
 
     it "discovers nested spec files" $ do
       inTempDirectory $ do
         touch "test/Spec.hs"
         touch "test/Foo/BarSpec.hs"
         touch "test/Foo/BazSpec.hs"
-        discover "test/Spec.hs" `shouldReturn` Just [Node "Foo" [Leaf "Bar", Leaf "Baz"]]
+        discover "test/Spec.hs" `shouldReturn` Just (Forest WithoutHook [Node "Foo" (Forest WithoutHook [Leaf "Bar", Leaf "Baz"])])
+
+    it "discovers hooks" $ do
+      inTempDirectory $ do
+        touch "test/Spec.hs"
+        touch "test/FooSpec.hs"
+        touch "test/BarSpec.hs"
+        touch "test/SpecHook.hs"
+        discover "test/Spec.hs" `shouldReturn` Just (Forest WithHook [Leaf "Bar", Leaf "Foo"])
+
+    it "discovers nested hooks" $ do
+      inTempDirectory $ do
+        touch "test/Spec.hs"
+        touch "test/Foo/BarSpec.hs"
+        touch "test/Foo/BazSpec.hs"
+        touch "test/Foo/SpecHook.hs"
+        discover "test/Spec.hs" `shouldReturn` Just (Forest WithoutHook [Node "Foo" (Forest WithHook [Leaf "Bar", Leaf "Baz"])])
 
     it "ignores invalid module names" $ do
       inTempDirectory $ do

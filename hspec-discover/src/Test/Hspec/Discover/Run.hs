@@ -14,6 +14,8 @@ module Test.Hspec.Discover.Run (
 , moduleNameFromId
 , pathToModule
 , Tree(..)
+, Forest(..)
+, Hook(..)
 , discover
 ) where
 import           Control.Monad
@@ -121,13 +123,16 @@ formatSpec (Spec name) = "describe " . shows name . " " . showString name . "Spe
 findSpecs :: FilePath -> IO (Maybe [Spec])
 findSpecs = fmap (fmap toSpecs) . discover
 
-toSpecs :: [Tree] -> [Spec]
-toSpecs = concatMap (go [])
+toSpecs :: Forest -> [Spec]
+toSpecs = fromForest []
   where
-    go :: [String] -> Tree -> [Spec]
-    go xs spec = case spec of
-      Leaf name -> [Spec . intercalate "." $ reverse (name : xs )]
-      Node name ys -> concatMap (go $ name : xs) ys
+    fromForest :: [String] -> Forest -> [Spec]
+    fromForest names (Forest hook xs) = concatMap (fromTree names) xs
+
+    fromTree :: [String] -> Tree -> [Spec]
+    fromTree names spec = case spec of
+      Leaf name -> [Spec . intercalate "." $ reverse (name : names )]
+      Node name forest -> fromForest (name : names) forest
 
 -- See `Cabal.Distribution.ModuleName` (http://git.io/bj34)
 isValidModuleName :: String -> Bool
@@ -137,19 +142,28 @@ isValidModuleName (c:cs) = isUpper c && all isValidModuleChar cs
 isValidModuleChar :: Char -> Bool
 isValidModuleChar c = isAlphaNum c || c == '_' || c == '\''
 
-data Tree = Leaf String | Node String [Tree]
+data Tree = Leaf String | Node String Forest
   deriving (Eq, Show)
 
-discover :: FilePath -> IO (Maybe [Tree])
+data Forest = Forest Hook [Tree]
+  deriving (Eq, Show)
+
+data Hook = WithHook | WithoutHook
+  deriving (Eq, Show)
+
+discover :: FilePath -> IO (Maybe Forest)
 discover src = (>>= filterSrc) <$> specForest dir
   where
-    filterSrc :: [Tree] -> Maybe [Tree]
-    filterSrc = ensureNotNull . maybe id (filter . (/=)) (toSpec file)
+    filterSrc :: Forest -> Maybe Forest
+    filterSrc (Forest hook xs) = ensureForest hook $ maybe id (filter . (/=)) (toSpec file) xs
 
     (dir, file) = splitFileName src
 
-specForest :: FilePath -> IO (Maybe [Tree])
-specForest dir = (filterModules <$> listDirectory dir) >>= fmap (ensureNotNull . catMaybes) . mapM toSpecTree
+specForest :: FilePath -> IO (Maybe Forest)
+specForest dir = do
+  files <- filterModules <$> listDirectory dir
+  hook <- mkHook dir files
+  ensureForest hook . catMaybes <$> mapM toSpecTree files
   where
     filterModules :: [FilePath] -> [FilePath]
     filterModules = sortNaturallyBy takeBaseName . filter (isValidModuleName . takeBaseName)
@@ -164,11 +178,21 @@ specForest dir = (filterModules <$> listDirectory dir) >>= fmap (ensureNotNull .
         isFile <- doesFileExist (dir </> name)
         return $ guard isFile >> toSpec name
 
+mkHook :: FilePath -> [FilePath] -> IO Hook
+mkHook dir files
+  | "SpecHook.hs" `elem` files = do
+    isFile <- doesFileExist (dir </> "SpecHook.hs")
+    return $ if isFile then WithHook else WithoutHook
+  | otherwise = return WithoutHook
+
 toSpec :: FilePath -> Maybe Tree
 toSpec file = Leaf <$> (stripSuffix "Spec.hs" file <|> stripSuffix "Spec.lhs" file)
   where
     stripSuffix :: Eq a => [a] -> [a] -> Maybe [a]
     stripSuffix suffix str = reverse <$> stripPrefix (reverse suffix) (reverse str)
+
+ensureForest :: Hook -> [Tree] -> Maybe Forest
+ensureForest hook = fmap (Forest hook) . ensureNotNull
 
 ensureNotNull :: [a] -> Maybe [a]
 ensureNotNull xs = guard (not . null $ xs) >> Just xs
